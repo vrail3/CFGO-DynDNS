@@ -262,9 +262,11 @@ func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 
 	}
 	if len(records) > 0 {
 		ipv4 = records[0].Content
-		modTime := records[0].ModifiedOn
-		if modTime.After(latestTime) {
-			latestTime = modTime
+		if !records[0].ModifiedOn.IsZero() {
+			modTime := records[0].ModifiedOn.UTC()
+			if modTime.After(latestTime) {
+				latestTime = modTime
+			}
 		}
 	}
 
@@ -278,10 +280,23 @@ func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 
 	}
 	if len(records) > 0 {
 		ipv6 = records[0].Content
-		modTime := records[0].ModifiedOn
-		if modTime.After(latestTime) {
-			latestTime = modTime
+		if !records[0].ModifiedOn.IsZero() {
+			modTime := records[0].ModifiedOn.UTC()
+			if modTime.After(latestTime) {
+				latestTime = modTime
+			}
 		}
+	}
+
+	// If no modification time was found, use creation time instead
+	if latestTime.IsZero() && len(records) > 0 && !records[0].CreatedOn.IsZero() {
+		latestTime = records[0].CreatedOn.UTC()
+	}
+
+	// If still no time found, use current time
+	if latestTime.IsZero() {
+		latestTime = time.Now().UTC()
+		log.Printf("Warning: No modification or creation time found, using current time")
 	}
 
 	return ipv4, ipv6, latestTime, nil
