@@ -164,8 +164,6 @@ func statusHandler(w http.ResponseWriter, status *UpdateStatus) {
 }
 
 func rootHandler(w http.ResponseWriter, r *http.Request, config *Config, api *cloudflare.API, status *UpdateStatus) {
-	log.Printf("Incoming request from %s: %s%s", r.RemoteAddr, r.Host, r.URL.String())
-
 	if r.URL.Path != "/" {
 		log.Printf("Invalid path requested: %s", r.URL.Path)
 		http.NotFound(w, r)
@@ -182,9 +180,9 @@ func rootHandler(w http.ResponseWriter, r *http.Request, config *Config, api *cl
 	log.Printf("Processing request from %s - IPv4: %s, IPv6: %s",
 		r.RemoteAddr, request.IPv4, request.IPv6)
 
-	// First, validate the app key
+	// First, validate the app key (no logging of key values)
 	if request.APPKey != config.APPKey {
-		log.Printf("Error: Invalid application key provided")
+		log.Printf("Error: Invalid application key from %s", r.RemoteAddr)
 		sendJSONResponse(w, UpdateResponse{Status: "error", Message: "Invalid application key"}, http.StatusUnauthorized)
 		return
 	}
