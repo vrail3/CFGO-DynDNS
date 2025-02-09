@@ -51,15 +51,11 @@ func NewUpdateStatus() *UpdateStatus {
 	}
 }
 
-func (s *UpdateStatus) Update(ipv4, ipv6 string, status string, timestamp ...time.Time) {
+func (s *UpdateStatus) Update(ipv4, ipv6 string, status string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(timestamp) > 0 {
-		s.LastUpdated = timestamp[0]
-	} else {
-		s.LastUpdated = time.Now()
-	}
+	s.LastUpdated = time.Now()
 	if ipv4 != "" {
 		s.IPv4 = ipv4
 	}
@@ -253,29 +249,24 @@ func sendJSONResponse(w http.ResponseWriter, response interface{}, statusCode in
 	json.NewEncoder(w).Encode(response)
 }
 
-func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (string, string, time.Time, error) {
+func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (string, string, error) {
 	records, _, err := api.ListDNSRecords(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
 		Name: recordName,
 	})
 	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("failed to list DNS records: %w", err)
+		return "", "", fmt.Errorf("failed to list DNS records: %w", err)
 	}
 
 	var ipv4, ipv6 string
-	var lastMod time.Time
-
 	for _, record := range records {
 		if record.Type == "A" {
 			ipv4 = record.Content
 		} else if record.Type == "AAAA" {
 			ipv6 = record.Content
 		}
-		if record.ModifiedOn.After(lastMod) {
-			lastMod = record.ModifiedOn
-		}
 	}
 
-	return ipv4, ipv6, lastMod, nil
+	return ipv4, ipv6, nil
 }
 
 func main() {
@@ -315,13 +306,13 @@ func main() {
 	updateStatus := NewUpdateStatus()
 
 	// Get current DNS records
-	ipv4, ipv6, lastMod, err := getCurrentDNSRecords(api, config.ZoneID, config.RecordName)
+	ipv4, ipv6, err := getCurrentDNSRecords(api, config.ZoneID, config.RecordName)
 	if err != nil {
 		log.Printf("Warning: Failed to get current DNS records: %v", err)
 	} else {
-		updateStatus.Update(ipv4, ipv6, "initialized", lastMod) // Pass the lastMod time
-		log.Printf("Current DNS records - IPv4: %s, IPv6: %s (last modified: %s)",
-			ipv4, ipv6, lastMod.Format(time.RFC3339))
+		updateStatus.Update(ipv4, ipv6, "initialized")
+		log.Printf("Current DNS records - IPv4: %s, IPv6: %s",
+			ipv4, ipv6)
 	}
 
 	srv := &http.Server{
