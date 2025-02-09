@@ -1,0 +1,14 @@
+services:
+  cloudflare-dyndns:
+    image: ghcr.io/vrail3/CFGO-DynDNS:latest
+    container_name: CFGO-DynDNS
+    ports:
+      - "80:8080"
+    restart: unless-stopped
+    environment:
+      CF_ZONE: "example.com"
+      # set either full subdomain or @ for root domain
+      CF_RECORD: "subdomain.example.com"
+      CF_API_KEY: "your-cloudflare-api-key"
+      # the key for the app to authenticate NOT the cloudflare api key
+      APP_KEY: "your-app-api-key"
