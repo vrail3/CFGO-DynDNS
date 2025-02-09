@@ -111,17 +111,20 @@ func loadConfig() (*Config, error) {
 }
 
 func updateDNSRecord(api *cloudflare.API, zoneID, recordName string, ipAddr string, recordType string) error {
+	// List records with both name and type filters
 	records, _, err := api.ListDNSRecords(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
-		Name: recordName,
 		Type: recordType,
+		Name: recordName,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list DNS records: %w", err)
 	}
 
-	record := cloudflare.DNSRecord{
-		Name:    recordName,
+	log.Printf("Found %d existing %s records for %s", len(records), recordType, recordName)
+
+	updateParams := cloudflare.UpdateDNSRecordParams{
 		Type:    recordType,
+		Name:    recordName,
 		Content: ipAddr,
 		TTL:     1, // Auto TTL
 		Proxied: cloudflare.BoolPtr(false),
@@ -130,31 +133,24 @@ func updateDNSRecord(api *cloudflare.API, zoneID, recordName string, ipAddr stri
 	if len(records) == 0 {
 		// Create new record
 		_, err = api.CreateDNSRecord(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.CreateDNSRecordParams{
-			Type:    record.Type,
-			Name:    record.Name,
-			Content: record.Content,
-			TTL:     record.TTL,
-			Proxied: record.Proxied,
+			Type:    updateParams.Type,
+			Name:    updateParams.Name,
+			Content: updateParams.Content,
+			TTL:     updateParams.TTL,
+			Proxied: updateParams.Proxied,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create DNS record: %w", err)
 		}
 		log.Printf("Created new %s record for %s: %s", recordType, recordName, ipAddr)
 	} else {
-		// Update existing record
-		record.ID = records[0].ID
-		_, err = api.UpdateDNSRecord(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.UpdateDNSRecordParams{
-			ID:      record.ID,
-			Type:    record.Type,
-			Name:    record.Name,
-			Content: record.Content,
-			TTL:     record.TTL,
-			Proxied: record.Proxied,
-		})
+		// Update first matching record
+		updateParams.ID = records[0].ID
+		_, err = api.UpdateDNSRecord(context.Background(), cloudflare.ZoneIdentifier(zoneID), updateParams)
 		if err != nil {
 			return fmt.Errorf("failed to update DNS record: %w", err)
 		}
-		log.Printf("Updated %s record for %s: %s", recordType, recordName, ipAddr)
+		log.Printf("Updated existing %s record for %s: %s (ID: %s)", recordType, recordName, ipAddr, records[0].ID)
 	}
 
 	return nil
