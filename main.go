@@ -51,11 +51,15 @@ func NewUpdateStatus() *UpdateStatus {
 	}
 }
 
-func (s *UpdateStatus) Update(ipv4, ipv6 string, status string) {
+func (s *UpdateStatus) Update(ipv4, ipv6 string, status string, timestamp ...time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.LastUpdated = time.Now()
+	if len(timestamp) > 0 {
+		s.LastUpdated = timestamp[0]
+	} else {
+		s.LastUpdated = time.Now()
+	}
 	if ipv4 != "" {
 		s.IPv4 = ipv4
 	}
@@ -231,12 +235,12 @@ func rootHandler(w http.ResponseWriter, r *http.Request, config *Config, api *cl
 	if len(updateErrors) > 0 {
 		errMsg := fmt.Sprintf("Failed to update DNS records: %s", strings.Join(updateErrors, "; "))
 		log.Printf("Error: %s", errMsg)
-		status.Update(request.IPv4, request.IPv6, "error")
+		status.Update(request.IPv4, request.IPv6, "error") // Uses current time for errors
 		sendJSONResponse(w, UpdateResponse{Status: "error", Message: errMsg}, http.StatusInternalServerError)
 		return
 	}
 
-	status.Update(request.IPv4, request.IPv6, "success")
+	status.Update(request.IPv4, request.IPv6, "success") // Uses current time for successful updates
 	sendJSONResponse(w, UpdateResponse{
 		Status:  "success",
 		Message: fmt.Sprintf("Updated DNS records - IPv4: %s, IPv6: %s", request.IPv4, request.IPv6),
@@ -262,11 +266,9 @@ func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 
 	}
 	if len(records) > 0 {
 		ipv4 = records[0].Content
-		if !records[0].ModifiedOn.IsZero() {
-			modTime := records[0].ModifiedOn.UTC()
-			if modTime.After(latestTime) {
-				latestTime = modTime
-			}
+		modTime := records[0].ModifiedOn
+		if modTime.After(latestTime) {
+			latestTime = modTime
 		}
 	}
 
@@ -280,11 +282,9 @@ func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 
 	}
 	if len(records) > 0 {
 		ipv6 = records[0].Content
-		if !records[0].ModifiedOn.IsZero() {
-			modTime := records[0].ModifiedOn.UTC()
-			if modTime.After(latestTime) {
-				latestTime = modTime
-			}
+		modTime := records[0].ModifiedOn
+		if modTime.After(latestTime) {
+			latestTime = modTime
 		}
 	}
 
@@ -343,8 +343,7 @@ func main() {
 	if err != nil {
 		log.Printf("Warning: Failed to get current DNS records: %v", err)
 	} else {
-		updateStatus.LastUpdated = lastMod
-		updateStatus.Update(ipv4, ipv6, "initialized")
+		updateStatus.Update(ipv4, ipv6, "initialized", lastMod) // Pass the lastMod time
 		log.Printf("Current DNS records - IPv4: %s, IPv6: %s (last modified: %s)",
 			ipv4, ipv6, lastMod.Format(time.RFC3339))
 	}
