@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,6 +33,34 @@ type Config struct {
 	APIKey     string
 	ZoneID     string
 	RecordName string
+}
+
+type UpdateStatus struct {
+	LastUpdated time.Time `json:"last_updated"`
+	IPv4        string    `json:"ipv4"`
+	IPv6        string    `json:"ipv6"`
+	Status      string    `json:"status"`
+	mu          sync.RWMutex
+}
+
+func NewUpdateStatus() *UpdateStatus {
+	return &UpdateStatus{
+		Status: "not_run",
+	}
+}
+
+func (s *UpdateStatus) Update(ipv4, ipv6 string, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.LastUpdated = time.Now()
+	if ipv4 != "" {
+		s.IPv4 = ipv4
+	}
+	if ipv6 != "" {
+		s.IPv6 = ipv6
+	}
+	s.Status = status
 }
 
 func loadConfig() (*Config, error) {
@@ -115,7 +144,14 @@ func updateDNSRecord(api *cloudflare.API, zoneID, recordName string, ipAddr stri
 	return nil
 }
 
-func rootHandler(w http.ResponseWriter, r *http.Request, config *Config, api *cloudflare.API) {
+func statusHandler(w http.ResponseWriter, status *UpdateStatus) {
+	status.mu.RLock()
+	defer status.mu.RUnlock()
+
+	sendJSONResponse(w, status, http.StatusOK)
+}
+
+func rootHandler(w http.ResponseWriter, r *http.Request, config *Config, api *cloudflare.API, status *UpdateStatus) {
 	log.Printf("Incoming request from %s: %s%s", r.RemoteAddr, r.Host, r.URL.String())
 
 	if r.URL.Path != "/" {
@@ -185,10 +221,12 @@ func rootHandler(w http.ResponseWriter, r *http.Request, config *Config, api *cl
 	if len(updateErrors) > 0 {
 		errMsg := fmt.Sprintf("Failed to update DNS records: %s", strings.Join(updateErrors, "; "))
 		log.Printf("Error: %s", errMsg)
+		status.Update(request.IPv4, request.IPv6, "error")
 		sendJSONResponse(w, UpdateResponse{Status: "error", Message: errMsg}, http.StatusInternalServerError)
 		return
 	}
 
+	status.Update(request.IPv4, request.IPv6, "success")
 	sendJSONResponse(w, UpdateResponse{
 		Status:  "success",
 		Message: fmt.Sprintf("Updated DNS records - IPv4: %s, IPv6: %s", request.IPv4, request.IPv6),
@@ -216,6 +254,8 @@ func main() {
 		log.Fatalf("Failed to initialize Cloudflare API client: %v", err)
 	}
 
+	updateStatus := NewUpdateStatus()
+
 	srv := &http.Server{
 		Addr:    ":8080",
 		Handler: http.DefaultServeMux,
@@ -223,9 +263,13 @@ func main() {
 
 	log.Printf("Configured for zone %s and record %s", config.ZoneID, config.RecordName)
 
-	// Update handler to include config and api client
+	// Update handler registrations to include status
+	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		statusHandler(w, updateStatus)
+	})
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		rootHandler(w, r, config, api)
+		rootHandler(w, r, config, api, updateStatus)
 	})
 
 	// Channel to listen for errors coming from the listener.
