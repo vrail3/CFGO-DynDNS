@@ -1,20 +1,20 @@
-# Base stage - shared build environment
+# syntax=docker/dockerfile:1.4
+# Build stage - shared build environment
 FROM --platform=$BUILDPLATFORM golang:1.23.6-alpine AS base
 WORKDIR /src
 
 # Deps stage - download and verify dependencies
 FROM base AS deps
 COPY go.mod go.sum ./
-RUN go mod download
+RUN go mod download -sync -x -json
 
 # Build stage - compile the application
 FROM deps AS builder
 COPY . .
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath \
+    go build -trimpath -buildvcs=false \
     -ldflags="-w -s" \
-    -tags netgo \
     -o /app/dyndns
 
 # UPX stage - compress the binary
