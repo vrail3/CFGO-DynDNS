@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -240,6 +241,17 @@ func sendJSONResponse(w http.ResponseWriter, response interface{}, statusCode in
 }
 
 func main() {
+	healthCheck := flag.Bool("health-check", false, "Run health check")
+	flag.Parse()
+
+	if *healthCheck {
+		resp, err := http.Get("http://localhost:8080/status")
+		if err != nil || resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	log.SetFlags(log.Ldate | log.Ltime | log.LUTC)
 	log.Printf("Initializing server...")
 
