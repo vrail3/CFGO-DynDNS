@@ -253,6 +253,31 @@ func sendJSONResponse(w http.ResponseWriter, response interface{}, statusCode in
 	json.NewEncoder(w).Encode(response)
 }
 
+func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (string, string, time.Time, error) {
+	records, _, err := api.ListDNSRecords(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
+		Name: recordName,
+	})
+	if err != nil {
+		return "", "", time.Time{}, fmt.Errorf("failed to list DNS records: %w", err)
+	}
+
+	var ipv4, ipv6 string
+	var lastMod time.Time
+
+	for _, record := range records {
+		if record.Type == "A" {
+			ipv4 = record.Content
+		} else if record.Type == "AAAA" {
+			ipv6 = record.Content
+		}
+		if record.ModifiedOn.After(lastMod) {
+			lastMod = record.ModifiedOn
+		}
+	}
+
+	return ipv4, ipv6, lastMod, nil
+}
+
 func main() {
 	healthCheck := flag.Bool("health-check", false, "Run health check")
 	flag.Parse()
