@@ -249,17 +249,23 @@ func sendJSONResponse(w http.ResponseWriter, response interface{}, statusCode in
 	json.NewEncoder(w).Encode(response)
 }
 
-func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 string, ipv6 string, err error) {
+func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 string, ipv6 string, lastMod time.Time, err error) {
+	var latestTime time.Time
+
 	// Get A record
 	records, _, err := api.ListDNSRecords(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
 		Type: "A",
 		Name: recordName,
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("failed to list A records: %w", err)
+		return "", "", latestTime, fmt.Errorf("failed to list A records: %w", err)
 	}
 	if len(records) > 0 {
 		ipv4 = records[0].Content
+		modTime := records[0].ModifiedOn.Time
+		if modTime.After(latestTime) {
+			latestTime = modTime
+		}
 	}
 
 	// Get AAAA record
@@ -268,13 +274,17 @@ func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 
 		Name: recordName,
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("failed to list AAAA records: %w", err)
+		return "", "", latestTime, fmt.Errorf("failed to list AAAA records: %w", err)
 	}
 	if len(records) > 0 {
 		ipv6 = records[0].Content
+		modTime := records[0].ModifiedOn.Time
+		if modTime.After(latestTime) {
+			latestTime = modTime
+		}
 	}
 
-	return ipv4, ipv6, nil
+	return ipv4, ipv6, latestTime, nil
 }
 
 func main() {
@@ -314,12 +324,14 @@ func main() {
 	updateStatus := NewUpdateStatus()
 
 	// Get current DNS records
-	ipv4, ipv6, err := getCurrentDNSRecords(api, config.ZoneID, config.RecordName)
+	ipv4, ipv6, lastMod, err := getCurrentDNSRecords(api, config.ZoneID, config.RecordName)
 	if err != nil {
 		log.Printf("Warning: Failed to get current DNS records: %v", err)
 	} else {
+		updateStatus.LastUpdated = lastMod
 		updateStatus.Update(ipv4, ipv6, "initialized")
-		log.Printf("Current DNS records - IPv4: %s, IPv6: %s", ipv4, ipv6)
+		log.Printf("Current DNS records - IPv4: %s, IPv6: %s (last modified: %s)",
+			ipv4, ipv6, lastMod.Format(time.RFC3339))
 	}
 
 	srv := &http.Server{
