@@ -1,7 +1,7 @@
 services:
   cloudflare-dyndns:
-    image: ghcr.io/vrail3/CFGO-DynDNS:latest
-    container_name: CFGO-DynDNS
+    image: ghcr.io/vrail3/cfgo-dyndns:latest
+    container_name: cfgo-dyndns
     ports:
       - "80:8080"
     restart: unless-stopped

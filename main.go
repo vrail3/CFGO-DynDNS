@@ -32,7 +32,8 @@ type UpdateResponse struct {
 type Config struct {
 	APPKey     string
 	APIKey     string
-	ZoneID     string
+	Zone       string // Changed from ZoneID to Zone
+	ZoneID     string // Will be populated after lookup
 	RecordName string
 }
 
@@ -64,11 +65,25 @@ func (s *UpdateStatus) Update(ipv4, ipv6 string, status string) {
 	s.Status = status
 }
 
+func getZoneID(api *cloudflare.API, zoneName string) (string, error) {
+	zones, err := api.ListZones(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("failed to list zones: %w", err)
+	}
+
+	for _, zone := range zones {
+		if zone.Name == zoneName {
+			return zone.ID, nil
+		}
+	}
+	return "", fmt.Errorf("zone %s not found", zoneName)
+}
+
 func loadConfig() (*Config, error) {
 	config := &Config{
 		APPKey:     os.Getenv("APP_KEY"),
 		APIKey:     os.Getenv("CF_API_KEY"),
-		ZoneID:     os.Getenv("CF_ZONE"),
+		Zone:       os.Getenv("CF_ZONE"), // Now expects domain name
 		RecordName: os.Getenv("CF_RECORD"),
 	}
 
@@ -81,7 +96,7 @@ func loadConfig() (*Config, error) {
 	if config.APIKey == "" {
 		missingVars = append(missingVars, "CF_API_KEY")
 	}
-	if config.ZoneID == "" {
+	if config.Zone == "" {
 		missingVars = append(missingVars, "CF_ZONE")
 	}
 	if config.RecordName == "" {
@@ -265,6 +280,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize Cloudflare API client: %v", err)
 	}
+
+	// Look up Zone ID
+	zoneID, err := getZoneID(api, config.Zone)
+	if err != nil {
+		log.Fatalf("Failed to get Zone ID: %v", err)
+	}
+	config.ZoneID = zoneID
+	log.Printf("Successfully found Zone ID for %s", config.Zone)
 
 	updateStatus := NewUpdateStatus()
 
