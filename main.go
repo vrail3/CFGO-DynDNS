@@ -262,7 +262,7 @@ func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 
 	}
 	if len(records) > 0 {
 		ipv4 = records[0].Content
-		modTime := records[0].ModifiedOn.Time
+		modTime := records[0].ModifiedOn
 		if modTime.After(latestTime) {
 			latestTime = modTime
 		}
@@ -278,7 +278,7 @@ func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 
 	}
 	if len(records) > 0 {
 		ipv6 = records[0].Content
-		modTime := records[0].ModifiedOn.Time
+		modTime := records[0].ModifiedOn
 		if modTime.After(latestTime) {
 			latestTime = modTime
 		}
