@@ -296,7 +296,7 @@ func main() {
 		Handler: http.DefaultServeMux,
 	}
 
-	log.Printf("Configured for zone %s and record %s", config.ZoneID, config.RecordName)
+	log.Printf("Configured for zone %s and record %s", config.Zone, config.RecordName)
 
 	// Update handler registrations to include status
 	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
