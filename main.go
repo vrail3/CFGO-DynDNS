@@ -150,7 +150,7 @@ func updateDNSRecord(api *cloudflare.API, zoneID, recordName string, ipAddr stri
 		if err != nil {
 			return fmt.Errorf("failed to update DNS record: %w", err)
 		}
-		log.Printf("Updated existing %s record for %s: %s (ID: %s)", recordType, recordName, ipAddr, records[0].ID)
+		log.Printf("Updated existing %s record for %s: %s", recordType, recordName, ipAddr)
 	}
 
 	return nil
