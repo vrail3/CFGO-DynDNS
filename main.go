@@ -249,6 +249,34 @@ func sendJSONResponse(w http.ResponseWriter, response interface{}, statusCode in
 	json.NewEncoder(w).Encode(response)
 }
 
+func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 string, ipv6 string, err error) {
+	// Get A record
+	records, _, err := api.ListDNSRecords(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
+		Type: "A",
+		Name: recordName,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("failed to list A records: %w", err)
+	}
+	if len(records) > 0 {
+		ipv4 = records[0].Content
+	}
+
+	// Get AAAA record
+	records, _, err = api.ListDNSRecords(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
+		Type: "AAAA",
+		Name: recordName,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("failed to list AAAA records: %w", err)
+	}
+	if len(records) > 0 {
+		ipv6 = records[0].Content
+	}
+
+	return ipv4, ipv6, nil
+}
+
 func main() {
 	healthCheck := flag.Bool("health-check", false, "Run health check")
 	flag.Parse()
@@ -284,6 +312,15 @@ func main() {
 	log.Printf("Successfully found Zone ID for %s", config.Zone)
 
 	updateStatus := NewUpdateStatus()
+
+	// Get current DNS records
+	ipv4, ipv6, err := getCurrentDNSRecords(api, config.ZoneID, config.RecordName)
+	if err != nil {
+		log.Printf("Warning: Failed to get current DNS records: %v", err)
+	} else {
+		updateStatus.Update(ipv4, ipv6, "initialized")
+		log.Printf("Current DNS records - IPv4: %s, IPv6: %s", ipv4, ipv6)
+	}
 
 	srv := &http.Server{
 		Addr:    ":8080",
