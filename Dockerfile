@@ -6,7 +6,7 @@ WORKDIR /src
 # Deps stage - download and verify dependencies
 FROM base AS deps
 COPY go.mod go.sum ./
-RUN go mod download -sync -x -json
+RUN go mod download
 
 # Build stage - compile the application
 FROM deps AS builder
