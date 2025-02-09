@@ -253,55 +253,6 @@ func sendJSONResponse(w http.ResponseWriter, response interface{}, statusCode in
 	json.NewEncoder(w).Encode(response)
 }
 
-func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (ipv4 string, ipv6 string, lastMod time.Time, err error) {
-	var latestTime time.Time
-
-	// Get A record
-	records, _, err := api.ListDNSRecords(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
-		Type: "A",
-		Name: recordName,
-	})
-	if err != nil {
-		return "", "", latestTime, fmt.Errorf("failed to list A records: %w", err)
-	}
-	if len(records) > 0 {
-		ipv4 = records[0].Content
-		modTime := records[0].ModifiedOn
-		if modTime.After(latestTime) {
-			latestTime = modTime
-		}
-	}
-
-	// Get AAAA record
-	records, _, err = api.ListDNSRecords(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
-		Type: "AAAA",
-		Name: recordName,
-	})
-	if err != nil {
-		return "", "", latestTime, fmt.Errorf("failed to list AAAA records: %w", err)
-	}
-	if len(records) > 0 {
-		ipv6 = records[0].Content
-		modTime := records[0].ModifiedOn
-		if modTime.After(latestTime) {
-			latestTime = modTime
-		}
-	}
-
-	// If no modification time was found, use creation time instead
-	if latestTime.IsZero() && len(records) > 0 && !records[0].CreatedOn.IsZero() {
-		latestTime = records[0].CreatedOn.UTC()
-	}
-
-	// If still no time found, use current time
-	if latestTime.IsZero() {
-		latestTime = time.Now().UTC()
-		log.Printf("Warning: No modification or creation time found, using current time")
-	}
-
-	return ipv4, ipv6, latestTime, nil
-}
-
 func main() {
 	healthCheck := flag.Bool("health-check", false, "Run health check")
 	flag.Parse()
