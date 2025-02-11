@@ -24,7 +24,7 @@ RUN apk add --no-cache upx && \
     upx --best --lzma /app/dyndns
 
 # Final stage - minimal runtime
-FROM scratch:latest
+FROM scratch
 COPY --from=compressor /app/dyndns /dyndns
 
 EXPOSE 8080
