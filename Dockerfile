@@ -2,6 +2,7 @@
 # Build stage - shared build environment
 FROM --platform=$BUILDPLATFORM golang:1.23.6-alpine AS base
 WORKDIR /src
+RUN apk --no-cache add ca-certificates
 
 # Deps stage - download and verify dependencies
 FROM base AS deps
@@ -25,6 +26,7 @@ RUN apk add --no-cache upx && \
 
 # Final stage - minimal runtime
 FROM scratch
+COPY --from=base /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=compressor /app/dyndns /dyndns
 
 EXPOSE 8080
