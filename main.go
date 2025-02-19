@@ -18,26 +18,30 @@ import (
 	"github.com/cloudflare/cloudflare-go"
 )
 
+// holds the values from the url request
 type UpdateRequest struct {
 	APPKey string `json:"key"`
 	IPv4   string `json:"ipv4,omitempty"`
 	IPv6   string `json:"ipv6,omitempty"`
 }
 
+// holds the response values
 type UpdateResponse struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
 }
 
+// holds the configuration values, read from envs
 type Config struct {
 	APPKey     string
 	APIKey     string
-	Zone       string // Changed from ZoneID to Zone
-	ZoneID     string // Will be populated after lookup
+	Zone       string
+	ZoneID     string
 	RecordName string
 	TimeZone   *time.Location
 }
 
+// holds current status
 type UpdateStatus struct {
 	LastUpdated time.Time `json:"last_updated"`
 	IPv4        string    `json:"ipv4"`
@@ -45,6 +49,113 @@ type UpdateStatus struct {
 	Status      string    `json:"status"`
 	mu          sync.RWMutex
 	config      *Config
+}
+
+func main() {
+
+	// Parse command line flags
+	healthCheck := flag.Bool("health-check", false, "Run health check")
+	flag.Parse()
+
+	// run heathcheck
+	if *healthCheck {
+		runHealthCheck()
+	}
+
+	config, err := loadConfig()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	log.Printf("Initializing server...")
+
+	// Initialize Cloudflare API client
+	api, err := cloudflare.NewWithAPIToken(config.APIKey)
+	if err != nil {
+		log.Fatalf("Failed to initialize Cloudflare API client: %v", err)
+	}
+
+	// Look up Zone ID
+	zoneID, err := getZoneID(api, config.Zone)
+	if err != nil {
+		log.Fatalf("Failed to get Zone ID: %v", err)
+	}
+	config.ZoneID = zoneID
+	log.Printf("Successfully found Zone ID for %s", config.Zone)
+
+	updateStatus := NewUpdateStatus(config)
+
+	// Get current DNS records
+	ipv4, ipv6, err := getCurrentDNSRecords(api, config.ZoneID, config.RecordName)
+	if err != nil {
+		log.Printf("Warning: Failed to get current DNS records: %v", err)
+	} else {
+		updateStatus.Update(ipv4, ipv6, "initialized")
+		log.Printf("Current DNS records - IPv4: %s, IPv6: %s",
+			ipv4, ipv6)
+	}
+
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: http.DefaultServeMux,
+	}
+
+	log.Printf("Configured for zone %s and record %s", config.Zone, config.RecordName)
+
+	// Update handler registrations to include status
+	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		statusHandler(w, updateStatus)
+	})
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		rootHandler(w, r, config, api, updateStatus)
+	})
+
+	// Channel to listen for errors coming from the listener.
+	serverErrors := make(chan error, 1)
+
+	// Start the server
+	go func() {
+		log.Printf("Server is ready to handle requests at :8080")
+		serverErrors <- srv.ListenAndServe()
+	}()
+
+	// Channel to listen for an interrupt or terminate signal from the OS.
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
+
+	// Blocking select waiting for either a server error or a signal.
+	select {
+	case err := <-serverErrors:
+		log.Printf("Server error: %v", err)
+		log.Fatalf("Server terminated unexpectedly")
+
+	case sig := <-shutdown:
+		log.Printf("Beginning shutdown sequence. Caught signal: %v", sig)
+
+		// Give outstanding requests a deadline for completion.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		// Asking listener to shut down and shed load.
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("WARNING: Graceful shutdown failed: %v", err)
+			if err := srv.Close(); err != nil {
+				log.Printf("ERROR: Failed to close server: %v", err)
+			}
+		} else {
+			log.Printf("Server shutdown completed successfully")
+		}
+	}
+}
+
+func runHealthCheck() {
+	resp, err := http.Get("http://localhost:8080/status")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		os.Exit(1)
+		log.Fatalf("Health check failed: %v", err)
+	}
+	os.Exit(0)
 }
 
 func NewUpdateStatus(config *Config) *UpdateStatus {
@@ -282,108 +393,4 @@ func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (strin
 	}
 
 	return ipv4, ipv6, nil
-}
-
-func main() {
-	healthCheck := flag.Bool("health-check", false, "Run health check")
-	flag.Parse()
-
-	if *healthCheck {
-		resp, err := http.Get("http://localhost:8080/status")
-		if err != nil || resp.StatusCode != http.StatusOK {
-			os.Exit(1)
-		}
-		os.Exit(0)
-	}
-
-	config, err := loadConfig()
-	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
-	}
-
-	// Configure logging with the correct timezone
-	log.SetFlags(log.Ldate | log.Ltime | log.Lmsgprefix)
-	// Create a custom logger prefix that includes the timezone
-	log.SetPrefix(fmt.Sprintf("[%s] ", config.TimeZone.String()))
-
-	log.Printf("Initializing server...")
-
-	// Initialize Cloudflare API client
-	api, err := cloudflare.NewWithAPIToken(config.APIKey)
-	if err != nil {
-		log.Fatalf("Failed to initialize Cloudflare API client: %v", err)
-	}
-
-	// Look up Zone ID
-	zoneID, err := getZoneID(api, config.Zone)
-	if err != nil {
-		log.Fatalf("Failed to get Zone ID: %v", err)
-	}
-	config.ZoneID = zoneID
-	log.Printf("Successfully found Zone ID for %s", config.Zone)
-
-	updateStatus := NewUpdateStatus(config)
-
-	// Get current DNS records
-	ipv4, ipv6, err := getCurrentDNSRecords(api, config.ZoneID, config.RecordName)
-	if err != nil {
-		log.Printf("Warning: Failed to get current DNS records: %v", err)
-	} else {
-		updateStatus.Update(ipv4, ipv6, "initialized")
-		log.Printf("Current DNS records - IPv4: %s, IPv6: %s",
-			ipv4, ipv6)
-	}
-
-	srv := &http.Server{
-		Addr:    ":8080",
-		Handler: http.DefaultServeMux,
-	}
-
-	log.Printf("Configured for zone %s and record %s", config.Zone, config.RecordName)
-
-	// Update handler registrations to include status
-	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		statusHandler(w, updateStatus)
-	})
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		rootHandler(w, r, config, api, updateStatus)
-	})
-
-	// Channel to listen for errors coming from the listener.
-	serverErrors := make(chan error, 1)
-
-	// Start the server
-	go func() {
-		log.Printf("Server is ready to handle requests at :8080")
-		serverErrors <- srv.ListenAndServe()
-	}()
-
-	// Channel to listen for an interrupt or terminate signal from the OS.
-	shutdown := make(chan os.Signal, 1)
-	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
-
-	// Blocking select waiting for either a server error or a signal.
-	select {
-	case err := <-serverErrors:
-		log.Printf("Server error: %v", err)
-		log.Fatalf("Server terminated unexpectedly")
-
-	case sig := <-shutdown:
-		log.Printf("Beginning shutdown sequence. Caught signal: %v", sig)
-
-		// Give outstanding requests a deadline for completion.
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
-		// Asking listener to shut down and shed load.
-		if err := srv.Shutdown(ctx); err != nil {
-			log.Printf("WARNING: Graceful shutdown failed: %v", err)
-			if err := srv.Close(); err != nil {
-				log.Printf("ERROR: Failed to close server: %v", err)
-			}
-		} else {
-			log.Printf("Server shutdown completed successfully")
-		}
-	}
 }
