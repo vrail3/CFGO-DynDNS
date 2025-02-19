@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -14,9 +15,41 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/cloudflare/cloudflare-go"
 )
+
+// Cloudflare API response types
+type cfZone struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+type cfZonesResponse struct {
+	Success bool     `json:"success"`
+	Result  []cfZone `json:"result"`
+}
+
+type cfDNSRecord struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	Proxied bool   `json:"proxied"`
+	TTL     int    `json:"ttl"`
+}
+
+type cfDNSResponse struct {
+	Success bool          `json:"success"`
+	Result  []cfDNSRecord `json:"result"`
+}
+
+type cfDNSUpdateRequest struct {
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	TTL     int    `json:"ttl"`
+	Proxied bool   `json:"proxied"`
+}
 
 // holds the values from the url request
 type request struct {
@@ -59,14 +92,8 @@ func init() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Initialize Cloudflare API client
-	api, err := cloudflare.NewWithAPIToken(config.apiKey)
-	if err != nil {
-		log.Fatalf("Failed to initialize Cloudflare API client: %v", err)
-	}
-
 	// Look up Zone ID
-	zoneID, err := getZoneID(api, config.zone)
+	zoneID, err := getZoneID(config.apiKey, config.zone)
 	if err != nil {
 		log.Fatalf("Failed to get Zone ID: %v", err)
 	}
@@ -78,7 +105,7 @@ func init() {
 	status := &status{}
 
 	// Get current DNS records, only log IPv4 and IPv6 if available
-	ipv4, ipv6, err := getCurrentDNSRecords(api, config.zoneID, config.record)
+	ipv4, ipv6, err := getCurrentDNSRecords(config.apiKey, config.zoneID, config.record)
 	if err != nil {
 		log.Printf("Warning: Failed to get current DNS records: %v", err)
 	} else {
@@ -101,7 +128,7 @@ func init() {
 	})
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		rootHandler(w, r, config, api, status)
+		rootHandler(w, r, config, status)
 	})
 }
 
@@ -179,14 +206,31 @@ func (s *status) Update(ipv4, ipv6 string, status string) {
 }
 
 // use provided Zone to get the Zone ID
-func getZoneID(api *cloudflare.API, zoneName string) (string, error) {
+func getZoneID(apiKey, zoneName string) (string, error) {
 
-	zones, err := api.ListZones(context.Background())
+	req, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/zones", nil)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to list zones: %w", err)
 	}
+	defer resp.Body.Close()
 
-	for _, zone := range zones {
+	var zones cfZonesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&zones); err != nil {
+		return "", fmt.Errorf("failed to decode zones response: %w", err)
+	}
+
+	if !zones.Success {
+		return "", fmt.Errorf("API request failed")
+	}
+
+	for _, zone := range zones.Result {
 		if zone.Name == zoneName {
 			return zone.ID, nil
 		}
@@ -228,48 +272,73 @@ func loadConfig() (*config, error) {
 }
 
 // actual update of the DNS record
-func updateDNSRecord(api *cloudflare.API, zoneID, recordName string, ipAddr string, recordType string) error {
+func updateDNSRecord(apiKey, zoneID, recordName, ipAddr, recordType string) error {
 
-	// List records with both name and type filters
-	records, _, err := api.ListDNSRecords(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
-		Type: recordType,
-		Name: recordName,
-	})
+	// First get existing records
+	listURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?type=%s&name=%s",
+		zoneID, recordType, recordName)
+
+	req, err := http.NewRequest("GET", listURL, nil)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to list DNS records: %w", err)
 	}
+	defer resp.Body.Close()
 
-	log.Printf("Found %d existing %s records for %s", len(records), recordType, recordName)
+	var records cfDNSResponse
+	if err := json.NewDecoder(resp.Body).Decode(&records); err != nil {
+		return fmt.Errorf("failed to decode DNS response: %w", err)
+	}
 
-	updateParams := cloudflare.UpdateDNSRecordParams{
+	updateData := cfDNSUpdateRequest{
 		Type:    recordType,
 		Name:    recordName,
 		Content: ipAddr,
-		TTL:     1, // Auto TTL
-		Proxied: cloudflare.BoolPtr(false),
+		TTL:     1,
+		Proxied: false,
 	}
 
-	// create new record if none found, otherwise update first matching record
-	if len(records) == 0 {
-		_, err = api.CreateDNSRecord(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.CreateDNSRecordParams{
-			Type:    updateParams.Type,
-			Name:    updateParams.Name,
-			Content: updateParams.Content,
-			TTL:     updateParams.TTL,
-			Proxied: updateParams.Proxied,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create DNS record: %w", err)
-		}
-		log.Printf("Created new %s record for %s: %s", recordType, recordName, ipAddr)
+	var url string
+	var method string
+
+	if len(records.Result) == 0 {
+		// Create new record
+		url = fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", zoneID)
+		method = "POST"
 	} else {
-		// Update first matching record
-		updateParams.ID = records[0].ID
-		_, err = api.UpdateDNSRecord(context.Background(), cloudflare.ZoneIdentifier(zoneID), updateParams)
-		if err != nil {
-			return fmt.Errorf("failed to update DNS record: %w", err)
-		}
-		log.Printf("Updated existing %s record for %s: %s", recordType, recordName, ipAddr)
+		// Update existing record
+		url = fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/%s",
+			zoneID, records.Result[0].ID)
+		method = "PUT"
+	}
+
+	jsonData, err := json.Marshal(updateData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal update data: %w", err)
+	}
+
+	req, err = http.NewRequest(method, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to %s DNS record: %w", strings.ToLower(method), err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("API request failed with status: %s", resp.Status)
 	}
 
 	return nil
@@ -282,7 +351,7 @@ func statusHandler(w http.ResponseWriter, status *status) {
 	sendJSONResponse(w, status, http.StatusOK)
 }
 
-func rootHandler(w http.ResponseWriter, r *http.Request, config *config, api *cloudflare.API, status *status) {
+func rootHandler(w http.ResponseWriter, r *http.Request, config *config, status *status) {
 
 	if r.URL.Path != "/" {
 		log.Printf("Invalid path requested: %s", r.URL.Path)
@@ -345,13 +414,13 @@ func rootHandler(w http.ResponseWriter, r *http.Request, config *config, api *cl
 
 	// Process updates
 	if request.IPv4 != "" {
-		if err := updateDNSRecord(api, config.zoneID, config.record, request.IPv4, "A"); err != nil {
+		if err := updateDNSRecord(config.apiKey, config.zoneID, config.record, request.IPv4, "A"); err != nil {
 			updateErrors = append(updateErrors, fmt.Sprintf("IPv4: %v", err))
 		}
 	}
 
 	if request.IPv6 != "" {
-		if err := updateDNSRecord(api, config.zoneID, config.record, request.IPv6, "AAAA"); err != nil {
+		if err := updateDNSRecord(config.apiKey, config.zoneID, config.record, request.IPv6, "AAAA"); err != nil {
 			updateErrors = append(updateErrors, fmt.Sprintf("IPv6: %v", err))
 		}
 	}
@@ -375,22 +444,37 @@ func rootHandler(w http.ResponseWriter, r *http.Request, config *config, api *cl
 
 // send JSON response
 func sendJSONResponse(w http.ResponseWriter, response interface{}, statusCode int) {
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(response)
 }
 
 // get current DNS records for initial status, before any updates ran
-func getCurrentDNSRecords(api *cloudflare.API, zoneID, recordName string) (string, string, error) {
-	records, _, err := api.ListDNSRecords(context.Background(), cloudflare.ZoneIdentifier(zoneID), cloudflare.ListDNSRecordsParams{
-		Name: recordName,
-	})
+func getCurrentDNSRecords(apiKey, zoneID, recordName string) (string, string, error) {
+
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?name=%s", zoneID, recordName)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", "", err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to list DNS records: %w", err)
 	}
+	defer resp.Body.Close()
+
+	var records cfDNSResponse
+	if err := json.NewDecoder(resp.Body).Decode(&records); err != nil {
+		return "", "", fmt.Errorf("failed to decode DNS response: %w", err)
+	}
 
 	var ipv4, ipv6 string
-	for _, record := range records {
+	for _, record := range records.Result {
 		if record.Type == "A" {
 			ipv4 = record.Content
 		} else if record.Type == "AAAA" {

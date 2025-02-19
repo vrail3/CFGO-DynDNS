@@ -6,8 +6,8 @@ RUN apk --no-cache add ca-certificates tzdata
 
 # Deps stage - download and verify dependencies
 FROM base AS deps
-COPY go.mod go.sum ./
-RUN go mod download
+COPY ./
+RUN go mod init cfgo-dyndns && go mod download
 
 # Build stage - compile the application
 FROM deps AS builder
