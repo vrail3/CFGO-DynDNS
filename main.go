@@ -296,13 +296,17 @@ func main() {
 		os.Exit(0)
 	}
 
-	log.SetFlags(log.Ldate | log.Ltime | log.LUTC)
-	log.Printf("Initializing server...")
-
 	config, err := loadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
+
+	// Configure logging with the correct timezone
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmsgprefix)
+	// Create a custom logger prefix that includes the timezone
+	log.SetPrefix(fmt.Sprintf("[%s] ", config.TimeZone.String()))
+
+	log.Printf("Initializing server...")
 
 	// Initialize Cloudflare API client
 	api, err := cloudflare.NewWithAPIToken(config.APIKey)
