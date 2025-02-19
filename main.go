@@ -35,6 +35,7 @@ type Config struct {
 	Zone       string // Changed from ZoneID to Zone
 	ZoneID     string // Will be populated after lookup
 	RecordName string
+	TimeZone   *time.Location
 }
 
 type UpdateStatus struct {
@@ -43,11 +44,13 @@ type UpdateStatus struct {
 	IPv6        string    `json:"ipv6"`
 	Status      string    `json:"status"`
 	mu          sync.RWMutex
+	config      *Config
 }
 
-func NewUpdateStatus() *UpdateStatus {
+func NewUpdateStatus(config *Config) *UpdateStatus {
 	return &UpdateStatus{
 		Status: "not_run",
+		config: config,
 	}
 }
 
@@ -55,7 +58,7 @@ func (s *UpdateStatus) Update(ipv4, ipv6 string, status string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.LastUpdated = time.Now()
+	s.LastUpdated = time.Now().In(s.config.TimeZone)
 	if ipv4 != "" {
 		s.IPv4 = ipv4
 	}
@@ -86,6 +89,18 @@ func loadConfig() (*Config, error) {
 		Zone:       os.Getenv("CF_ZONE"), // Now expects domain name
 		RecordName: os.Getenv("CF_RECORD"),
 	}
+
+	// Load timezone
+	tz := os.Getenv("TZ")
+	if tz == "" {
+		tz = "UTC" // Default to UTC if not specified
+	}
+
+	location, err := time.LoadLocation(tz)
+	if err != nil {
+		return nil, fmt.Errorf("invalid timezone: %w", err)
+	}
+	config.TimeZone = location
 
 	// Validate required fields
 	var missingVars []string
@@ -303,7 +318,7 @@ func main() {
 	config.ZoneID = zoneID
 	log.Printf("Successfully found Zone ID for %s", config.Zone)
 
-	updateStatus := NewUpdateStatus()
+	updateStatus := NewUpdateStatus(config)
 
 	// Get current DNS records
 	ipv4, ipv6, err := getCurrentDNSRecords(api, config.ZoneID, config.RecordName)

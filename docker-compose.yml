@@ -12,3 +12,5 @@ services:
       CF_API_KEY: "your-cloudflare-api-key"
       # the key for the app to authenticate NOT the cloudflare api key
       APP_KEY: "your-app-api-key"
+      # TZ for correct logging timestamps
+      TZ: "Europe/Berlin"
