@@ -6,12 +6,11 @@ RUN apk --no-cache add ca-certificates tzdata
 
 # Deps stage - download and verify dependencies
 FROM base AS deps
-COPY ./
+COPY . .
 RUN go mod init cfgo-dyndns && go mod download
 
 # Build stage - compile the application
 FROM deps AS builder
-COPY . .
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -buildvcs=false \
