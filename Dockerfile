@@ -26,9 +26,9 @@ RUN apk add --no-cache upx && \
 
 # Final stage - minimal runtime
 FROM scratch
-COPY --from=base /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
-    --from=base /usr/share/zoneinfo /usr/share/zoneinfo \
-    --from=compressor /app/dyndns /dyndns
+COPY --from=base /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=base /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=compressor /app/dyndns /dyndns
 
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
