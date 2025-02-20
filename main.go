@@ -85,6 +85,11 @@ type status struct {
 // handle init before server start
 func init() {
 
+	//skip init for health check
+	if len(os.Args) > 1 && os.Args[1] == "-health-check" {
+		return
+	}
+
 	log.Printf("Initializing server...")
 
 	config, err := loadConfig()
