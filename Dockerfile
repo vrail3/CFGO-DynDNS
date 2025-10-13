@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 # Build stage - shared build environment
-FROM --platform=$BUILDPLATFORM golang:1.25.1-alpine AS base
+FROM --platform=$BUILDPLATFORM golang:1.25.2-alpine AS base
 WORKDIR /src
 RUN apk --no-cache add ca-certificates tzdata
 
