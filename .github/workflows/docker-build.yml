@@ -46,5 +46,5 @@ jobs:
         with:
           package-name: 'cfgo-dyndns'
           package-type: 'container'
-          min-versions-to-keep: 4
+          min-versions-to-keep: 3
           token: ${{ secrets.GITHUB_TOKEN }}
