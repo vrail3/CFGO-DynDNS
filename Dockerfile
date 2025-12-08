@@ -17,17 +17,11 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     -ldflags="-w -s" \
     -o /app/dyndns
 
-# UPX stage - compress the binary
-FROM alpine:latest AS compressor
-COPY --from=builder /app/dyndns /app/dyndns
-RUN apk add --no-cache upx && \
-    upx --best --lzma /app/dyndns
-
 # Final stage - minimal runtime
 FROM scratch
 COPY --from=base /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=base /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=compressor /app/dyndns /dyndns
+COPY --from=builder /app/dyndns /dyndns
 
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
